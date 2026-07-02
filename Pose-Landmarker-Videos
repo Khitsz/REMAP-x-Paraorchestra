@@ -1,0 +1,110 @@
+import csv
+import cv2
+import mediapipe as mp
+from mediapipe.tasks import python
+from mediapipe.tasks.python import vision
+
+
+video_path = "20250513_171204 - Side-to-side.mp4"
+output_csv = "pose-estimator.csv"
+model_path = "pose_landmarker_lite.task"
+
+
+BaseOptions = mp.tasks.BaseOptions
+PoseLandmarker = vision.PoseLandmarker
+PoseLandmarkerOptions = vision.PoseLandmarkerOptions
+VisionRunningMode = vision.RunningMode
+
+
+options = PoseLandmarkerOptions(
+    base_options=BaseOptions(model_asset_path=model_path),
+    running_mode=VisionRunningMode.VIDEO,
+    num_poses=1,
+    min_pose_detection_confidence=1,
+    min_pose_presence_confidence=1,
+    min_tracking_confidence=1,
+)
+
+
+cap = cv2.VideoCapture(video_path)
+
+if not cap.isOpened():
+    print(f"Error: Could not open video file: {video_path}")
+    exit()
+
+
+fps = cap.get(cv2.CAP_PROP_FPS)
+
+if fps == 0:
+    fps = 30
+
+frame_number = 0
+csv_data = []
+
+with PoseLandmarker.create_from_options(options) as landmarker:
+    while cap.isOpened():
+        ret, frame = cap.read()
+
+        if not ret:
+            break
+
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        mp_image = mp.Image(
+            image_format=mp.ImageFormat.SRGB,
+            data=frame_rgb
+        )
+
+        timestamp_ms = int((frame_number / fps) * 1000)
+
+        result = landmarker.detect_for_video(mp_image, timestamp_ms)
+
+        if result.pose_landmarks:
+            landmarks = result.pose_landmarks[0]
+
+            for idx, landmark in enumerate(landmarks):
+                csv_data.append([
+                    frame_number,
+                    idx,
+                    landmark.x,
+                    landmark.y,
+                    landmark.z,
+                    landmark.visibility,
+                    landmark.presence
+                ])
+
+                h, w, _ = frame.shape
+                cx = int(landmark.x * w)
+                cy = int(landmark.y * h)
+                cv2.circle(frame, (cx, cy), 4, (0, 255, 0), -1)
+
+        cv2.imshow("MediaPipe Pose", frame)
+
+        if cv2.waitKey(1) & 0xFF == ord("q"):
+            break
+
+        frame_number += 1
+
+        if frame_number % 30 == 0:
+            print(f"Processed frame {frame_number}")
+
+
+with open(output_csv, mode="w", newline="") as file:
+    writer = csv.writer(file)
+
+    writer.writerow([
+        "frame_number",
+        "landmark_index",
+        "x",
+        "y",
+        "z",
+        "visibility",
+        "presence"
+    ])
+
+    writer.writerows(csv_data)
+
+
+cap.release()
+cv2.destroyAllWindows()
+
+print(f"Finished. Landmark data saved to {output_csv}")
